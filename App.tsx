@@ -65,26 +65,6 @@ const App: React.FC = () => {
     }
   }, [itineraries, user, isLoaded]);
 
-  // Cleanup test accounts (Temporary)
-  useEffect(() => {
-    const targets = ['jerryhu890406', 'jerryhu'];
-    const users = JSON.parse(localStorage.getItem('voyage_users') || '{}');
-    let changed = false;
-
-    targets.forEach(t => {
-      if (users[t]) {
-        delete users[t];
-        changed = true;
-      }
-      localStorage.removeItem(`voyage_data_${t}`);
-    });
-
-    if (changed) {
-      localStorage.setItem('voyage_users', JSON.stringify(users));
-      console.log('Cleanup executed: Test accounts removed');
-    }
-  }, []);
-
   const resetForm = () => {
     setTripTitle(''); setDestination(''); setStartDate(''); setEndDate(''); setVibe([]); setEditingTripId(null); setFormError(null);
   };

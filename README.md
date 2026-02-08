@@ -56,4 +56,5 @@ This project is configured to deploy to **GitHub Pages** automatically via GitHu
 
 ## 📝 License
 
+
 This project is open source.
