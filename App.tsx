@@ -278,8 +278,8 @@ const App: React.FC = () => {
           <span className="font-bold text-white tracking-widest uppercase text-xs">Voyage Genie</span>
         </div>
         <div className="flex items-center gap-4">
-          <span className="text-slate-500 text-xs font-bold bg-slate-900 px-3 py-1 rounded-full">{user}</span>
-          <button onClick={() => setUser(null)} className="text-slate-500 text-xs font-bold hover:text-white transition-colors flex items-center gap-1"><LogOut size={12} /> LOGOUT</button>
+          <span className="text-slate-500 text-xs font-bold bg-slate-900 px-3 py-1 rounded-full">{user.substring(0, 8)}...</span>
+          <button onClick={() => { supabase.auth.signOut(); setUser(null); }} className="text-slate-500 text-xs font-bold hover:text-white transition-colors flex items-center gap-1"><LogOut size={12} /> LOGOUT</button>
         </div>
       </div>
 

@@ -106,8 +106,19 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
         }
     };
 
+    // FORCE CLEANUP ON MOUNT (User Request)
+    React.useEffect(() => {
+        const hasCleaned = localStorage.getItem('voyage_legacy_cleaned');
+        if (!hasCleaned) {
+            console.log('Executing forced legacy cleanup...');
+            localStorage.clear();
+            localStorage.setItem('voyage_legacy_cleaned', 'true');
+            // alert('舊版資料已自動清除'); // Optional: Feedback
+        }
+    }, []);
+
     return (
-        <div className="min-h-screen bg-black flex items-center justify-center p-6">
+        <div className="min-h-screen bg-black flex items-center justify-center p-6 relative">
             <div className="w-full max-w-md bg-slate-900 border border-slate-800 p-8 rounded-[2.5rem] shadow-2xl">
                 <div className="text-center mb-8">
                     <h1 className="text-3xl font-black text-white mb-2">Voyage Genie</h1>
@@ -279,12 +290,13 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
 
                     <button
                         onClick={() => {
-                            if (window.confirm('確定要清除所有舊版(單機)的帳號與資料嗎？此動作無法還原。')) {
+                            if (confirm('確定要清除所有舊版(單機)的帳號與資料嗎？此動作無法還原。')) {
                                 localStorage.clear();
                                 alert('舊版資料已清除');
+                                window.location.reload();
                             }
                         }}
-                        className="mt-4 text-slate-700 font-bold text-[10px] uppercase hover:text-red-500 transition-colors"
+                        className="mt-8 mx-auto block text-slate-600 font-bold text-xs uppercase hover:text-red-500 transition-colors border border-slate-800 rounded-full px-4 py-2"
                     >
                         清除舊版資料 (Clear Legacy Data)
                     </button>
