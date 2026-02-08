@@ -1,20 +1,59 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Travel App
 
-# Run and deploy your AI Studio app
+This project is a React application built with Vite, TypeScript, and Google Gemini AI.
 
-This contains everything you need to run your app locally.
+## 🚀 Getting Started
 
-View your app in AI Studio: https://ai.studio/apps/drive/1ktH9LCVt-33fVr_zOi4WuSi2gJ5pkbct
+### Prerequisites
 
-## Run Locally
+- Node.js (LTS version recommended)
+- npm (comes with Node.js)
 
-**Prerequisites:**  Node.js
+### Installation
 
+1.  Clone the repository:
+    ```bash
+    git clone https://github.com/your-username/Travel-App.git
+    cd Travel-App
+    ```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+2.  Install dependencies:
+    ```bash
+    npm install
+    ```
+
+3.  Set up environment variables:
+    - Create a `.env.local` file in the root directory.
+    - Add your Gemini API key:
+      ```env
+      GEMINI_API_KEY=your_api_key_here
+      ```
+
+4.  Start the development server:
+    ```bash
+    npm run dev
+    ```
+
+## 🛠 Scripts
+
+- `npm run dev`: Starts the development server.
+- `npm run build`: Builds the app for production.
+- `npm run preview`: Locally preview the production build.
+
+## 📦 Deployment
+
+This project is configured to deploy to **GitHub Pages** automatically via GitHub Actions.
+
+1.  Push your changes to the `main` or `master` branch.
+2.  Go to your repository **Settings** -> **Pages**.
+3.  Under **Build and deployment**, select **GitHub Actions** as the source.
+4.  The action will trigger and deploy your site.
+
+## ⚙️ Configuration
+
+- **Vite Config**: `vite.config.ts` is configured with `base: './'` for relative path deployment, ensuring it works on GitHub Pages subdirectories.
+- **TypeScript**: `tsconfig.json` is set up for strict type checking.
+
+## 📝 License
+
+This project is open source.
