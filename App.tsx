@@ -12,12 +12,14 @@ import ImageLightbox from './src/components/ImageLightbox';
 import AuthPage from './src/components/AuthPage';
 
 // Main App Component
+import { supabase } from './src/lib/supabase';
+
+// Main App Component
 const App: React.FC = () => {
   // Auth State
-  const [user, setUser] = useState<string | null>(localStorage.getItem('voyage_user_session'));
+  const [user, setUser] = useState<string | null>(null);
 
   // App State
-  // Lazy init to avoid re-reading storage on every render, but updated via effect
   const [itineraries, setItineraries] = useState<Itinerary[]>([]);
 
   const [activeTab, setActiveTab] = useState<'home' | 'create' | 'view'>('home');
@@ -39,31 +41,121 @@ const App: React.FC = () => {
 
   const [isLoaded, setIsLoaded] = useState(false);
 
+  // Auth Listener
+  useEffect(() => {
+    // Check active session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user?.id || null);
+    });
+
+    // Listen for changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user?.id || null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
   // Load data when user changes
   useEffect(() => {
-    if (user) {
-      const saved = localStorage.getItem(`voyage_data_${user}`);
-      console.log('Loading data for user:', user, saved ? 'Found' : 'Empty');
-      if (saved) {
-        setItineraries(JSON.parse(saved));
+    const loadItineraries = async () => {
+      if (user) {
+        setIsLoaded(false);
+        const { data, error } = await supabase
+          .from('itineraries')
+          .select('id, data')
+          .eq('user_id', user);
+
+        if (error) {
+          console.error('Error loading itineraries:', error);
+          setItineraries([]); // Fallback
+        } else if (data) {
+          // Flatten: Supabase returns { id, data: {...} }. We need {...data, id} or just the data object if ID is inside.
+          // Our itinerary object HAS 'id'.
+          // Let's assume we store the WHOLE itinerary in 'data'.
+          const loaded = data.map(row => row.data as Itinerary);
+          setItineraries(loaded);
+        }
+        setIsLoaded(true);
       } else {
         setItineraries([]);
+        setIsLoaded(false);
       }
-      setIsLoaded(true);
-      localStorage.setItem('voyage_user_session', user);
-    } else {
-      localStorage.removeItem('voyage_user_session');
-      setItineraries([]);
-      setIsLoaded(false);
-    }
+    };
+
+    loadItineraries();
   }, [user]);
 
   // Save data when data changes
+  // Strategy: We can save individual itineraries when they change? 
+  // OR standard "save all" approach.
+  // Ideally, Supabase 'upsert' works best per row.
+  // Our state is `itineraries` (ARRAY).
+  // Current local storage saves the WHOLE array.
+  // To keep it simple and consistent with previous refactor:
+  // We can't easily detect WHICH one changed in this effect without deep compare or previous state.
+  // However, for this scale, we can just upsert ALL active itineraries for the user? NO, that's heavy.
+  // Better: Only save when `handleSaveTrip` or `updateSelectedTrip` is called?
+  // BUT the existing code relied on `useEffect` to sync everything.
+  // Let's try to keep `useEffect` but be careful.
+  // Actually, sending 5-10 requests on every keystroke (if controlled inputs update state) is bad?
+  // Our inputs (packing list check) update state instantly.
+  // Optimization: Debounce? Or just accept it for now?
+  // Supabase has rate limits.
+  // Let's rely on the fact that existing logic `setItineraries` triggers this.
+  // Checking checkboxes triggers this.
+  // To avoid spamming, let's implement a simple Debounce or Ref to track pending save.
+
+  // Actually, to correctly map to DB rows:
+  // Table: itineraries (id, user_id, data)
+  // We should UPSERT each itinerary in the array.
+
   useEffect(() => {
-    if (user && isLoaded) {
-      localStorage.setItem(`voyage_data_${user}`, JSON.stringify(itineraries));
-    }
+    if (!user || !isLoaded) return;
+
+    const saveToSupabase = async () => {
+      // We need to map `itineraries` to rows
+      // Note: This pushes ALL itineraries every time ONE changes. Not efficient but robust for synchronization.
+      const rows = itineraries.map(it => ({
+        id: it.id,
+        user_id: user,
+        data: it
+      }));
+
+      if (rows.length === 0) return; // Nothing to save? Or should we delete?
+      // If itineraries is empty, we might have deleted all? 
+      // If we deleted locally, we need to delete remote.
+      // Syncing "Delete" is tricky with just "Upsert All".
+      // Use 'deleteConfirmId' flow for explicit deletes.
+
+      const { error } = await supabase
+        .from('itineraries')
+        .upsert(rows);
+
+      if (error) console.error('Error saving itineraries:', error);
+    };
+
+    // Debounce to prevent rapid-fire updates
+    const timeout = setTimeout(saveToSupabase, 1000);
+    return () => clearTimeout(timeout);
   }, [itineraries, user, isLoaded]);
+
+  // Handle explicit delete in DB
+  const handleDelete = async (id: string) => {
+    if (!user) return;
+    const { error } = await supabase.from('itineraries').delete().eq('id', id);
+    if (error) {
+      console.error('Failed to delete:', error);
+      alert('刪除失敗，請檢查網路');
+      return; // Don't remove nicely if DB failed? Or optimistic?
+    }
+    setItineraries(itineraries.filter(t => t.id !== id));
+    setDeleteConfirmId(null);
+    if (selectedItinerary?.id === id) {
+      setSelectedItinerary(null);
+      setActiveTab('home');
+    }
+  };
 
   const resetForm = () => {
     setTripTitle(''); setDestination(''); setStartDate(''); setEndDate(''); setVibe([]); setEditingTripId(null); setFormError(null);
@@ -353,11 +445,7 @@ const App: React.FC = () => {
               <p className="text-slate-500 font-bold text-sm">此動作將會抹除該次旅遊的所有內容，且無法還原。</p>
             </div>
             <div className="flex flex-col gap-3">
-              <button onClick={() => {
-                setItineraries(itineraries.filter(t => t.id !== deleteConfirmId));
-                setDeleteConfirmId(null);
-                if (selectedItinerary?.id === deleteConfirmId) setActiveTab('home');
-              }} className="w-full py-5 bg-red-600 hover:bg-red-500 text-white rounded-[2rem] font-black transition-all">狠心刪除</button>
+              <button onClick={() => handleDelete(deleteConfirmId)} className="w-full py-5 bg-red-600 hover:bg-red-500 text-white rounded-[2rem] font-black transition-all">狠心刪除</button>
               <button onClick={() => setDeleteConfirmId(null)} className="w-full py-5 bg-slate-800 text-slate-400 rounded-[2rem] font-black">再想一下</button>
             </div>
           </div>

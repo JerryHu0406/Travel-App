@@ -1,6 +1,7 @@
 
 import React, { useState } from 'react';
 import { User, Lock, ArrowRight } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 
 interface AuthPageProps {
     onLogin: (username: string) => void;
@@ -8,14 +9,14 @@ interface AuthPageProps {
 
 const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
     const [mode, setMode] = useState<'login' | 'register' | 'forgot' | 'change'>('login');
-    const [username, setUsername] = useState('');
-    const [password, setPassword] = useState(''); // Used for Login, Register (as new), Change (as old)
-    const [newPassword, setNewPassword] = useState(''); // Used for Change, Forgot
-    const [securityQuestion, setSecurityQuestion] = useState('您的第一所國小是？'); // Default or custom
+    const [email, setEmail] = useState(''); // Supabase uses Email
+    const [password, setPassword] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [securityQuestion, setSecurityQuestion] = useState('您的第一所國小是？');
     const [securityAnswer, setSecurityAnswer] = useState('');
-    const [retrievedQuestion, setRetrievedQuestion] = useState<string | null>(null); // For Forgot Password
     const [error, setError] = useState('');
     const [successMsg, setSuccessMsg] = useState('');
+    const [loading, setLoading] = useState(false);
 
     const QUESTIONS = [
         '您的第一所國小是？',
@@ -32,108 +33,76 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
         setSecurityAnswer('');
         setError('');
         setSuccessMsg('');
-        setRetrievedQuestion(null);
-        // Keep username for convenience if switching modes
     };
 
-    const handleForgotCheckUser = () => {
-        const users = JSON.parse(localStorage.getItem('voyage_users') || '{}');
-        const user = users[username];
-        if (!user) {
-            setError('找不到此帳號');
-            return;
-        }
-        if (typeof user === 'string' || !user.question) {
-            setError('此帳號未設定安全問題，無法重設密碼');
-            return;
-        }
-        setRetrievedQuestion(user.question);
-        setError('');
-    };
-
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
         setSuccessMsg('');
+        setLoading(true);
 
-        const users = JSON.parse(localStorage.getItem('voyage_users') || '{}');
-
-        // Check Lockout (Only for Login)
-        if (mode === 'login') {
-            const attemptsStr = localStorage.getItem('login_attempts');
-            const attempts = attemptsStr ? JSON.parse(attemptsStr) : { count: 0, lockUntil: 0 };
-            if (attempts.lockUntil > Date.now()) {
-                const waitMinutes = Math.ceil((attempts.lockUntil - Date.now()) / 60000);
-                setError(`嘗試次數過多，請於 ${waitMinutes} 分鐘後再試。`);
-                return;
-            }
-        }
-
-        if (mode === 'login') {
-            if (!username || !password) { setError('請輸入帳號和密碼'); return; }
-
-            const userData = users[username];
-            // Backward compatibility: userData might be string (old) or object (new)
-            const storedPass = typeof userData === 'string' ? userData : userData?.password;
-
-            if (storedPass && storedPass === password) {
-                localStorage.removeItem('login_attempts');
-                // Migrate old user to new format if needed? Maybe later.
-                onLogin(username);
-            } else {
-                // Fail logic
-                const attemptsStr = localStorage.getItem('login_attempts');
-                const attempts = attemptsStr ? JSON.parse(attemptsStr) : { count: 0, lockUntil: 0 };
-                const newCount = (attempts.count || 0) + 1;
-                if (newCount >= 5) {
-                    const lockTime = Date.now() + 5 * 60 * 1000;
-                    localStorage.setItem('login_attempts', JSON.stringify({ count: newCount, lockUntil: lockTime }));
-                    setError('登入失敗次數過多，帳號已暫時鎖定 5 分鐘。');
-                } else {
-                    localStorage.setItem('login_attempts', JSON.stringify({ count: newCount, lockUntil: 0 }));
-                    setError(`帳號或密碼錯誤 (剩餘嘗試次數: ${5 - newCount})`);
+        try {
+            if (mode === 'login') {
+                const { data, error } = await supabase.auth.signInWithPassword({
+                    email: email,
+                    password: password,
+                });
+                if (error) throw error;
+                if (data.user) {
+                    onLogin(data.user.id);
                 }
-            }
-        } else if (mode === 'register') {
-            if (!username || !password || !securityAnswer) { setError('請填寫所有欄位'); return; }
-            if (users[username]) { setError('此帳號已被註冊'); return; }
+            } else if (mode === 'register') {
+                const { data, error: signUpError } = await supabase.auth.signUp({
+                    email: email,
+                    password: password,
+                });
+                if (signUpError) throw signUpError;
 
-            users[username] = {
-                password: password,
-                question: securityQuestion,
-                answer: securityAnswer
-            };
-            localStorage.setItem('voyage_users', JSON.stringify(users));
-            onLogin(username);
-        } else if (mode === 'change') {
-            if (!username || !password || !newPassword) { setError('請填寫所有欄位'); return; }
-            const user = users[username];
-            if (!user) { setError('找不到此帳號'); return; }
+                if (data.user) {
+                    const { error: profileError } = await supabase
+                        .from('profiles')
+                        .insert([
+                            {
+                                id: data.user.id,
+                                username: email.split('@')[0],
+                                security_question: securityQuestion,
+                                security_answer: securityAnswer
+                            }
+                        ]);
 
-            const storedPass = typeof user === 'string' ? user : user.password;
-            if (storedPass !== password) { setError('舊密碼錯誤'); return; }
+                    if (profileError) {
+                        console.error('Profile creation failed:', profileError);
+                    }
 
-            // Update password, keep other info if object
-            if (typeof user === 'string') {
-                users[username] = { password: newPassword, question: '', answer: '' }; // Partial migration
-            } else {
-                users[username] = { ...user, password: newPassword };
+                    if (!data.session) {
+                        setSuccessMsg('註冊成功！請檢查信箱驗證連結，然後登入。');
+                        setTimeout(() => resetState('login'), 3000);
+                    } else {
+                        onLogin(data.user.id);
+                    }
+                }
+            } else if (mode === 'change') {
+                const { error: signInError } = await supabase.auth.signInWithPassword({
+                    email: email,
+                    password: password
+                });
+                if (signInError) throw new Error('舊密碼錯誤或帳號不存在');
+
+                const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
+                if (updateError) throw updateError;
+
+                setSuccessMsg('密碼修改成功！請重新登入');
+                setTimeout(() => resetState('login'), 2000);
+
+            } else if (mode === 'forgot') {
+                const { error } = await supabase.auth.resetPasswordForEmail(email);
+                if (error) throw error;
+                setSuccessMsg('重設密碼信件已發送，請檢查您的信箱。');
             }
-            localStorage.setItem('voyage_users', JSON.stringify(users));
-            setSuccessMsg('密碼修改成功！請重新登入');
-            setTimeout(() => resetState('login'), 2000);
-        } else if (mode === 'forgot') {
-            if (!username || !securityAnswer || !newPassword) { setError('請填寫所有欄位'); return; }
-            const user = users[username];
-            // Should have been checked by handleForgotCheckUser, but check again
-            if (!user || typeof user === 'string' || user.answer !== securityAnswer) {
-                setError('安全問題回答錯誤');
-                return;
-            }
-            users[username] = { ...user, password: newPassword };
-            localStorage.setItem('voyage_users', JSON.stringify(users));
-            setSuccessMsg('密碼重設成功！請使用新密碼登入');
-            setTimeout(() => resetState('login'), 2000);
+        } catch (err: any) {
+            setError(err.message || '發生錯誤');
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -152,16 +121,16 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
 
                 <form onSubmit={handleSubmit} className="space-y-6">
                     <div className="space-y-2">
-                        <label className="text-xs font-black text-slate-500 uppercase ml-1">Username</label>
+                        <label className="text-xs font-black text-slate-500 uppercase ml-1">Email</label>
                         <div className="relative">
                             <User size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
                             <input
-                                type="text"
-                                value={username}
-                                onChange={e => setUsername(e.target.value)}
+                                type="email"
+                                value={email}
+                                onChange={e => setEmail(e.target.value)}
                                 className="w-full bg-slate-950 border border-slate-800 rounded-2xl pl-12 pr-6 py-4 font-bold text-white outline-none focus:border-indigo-500 transition-all"
-                                placeholder="輸入帳號"
-                                disabled={mode === 'forgot' && retrievedQuestion !== null} // Lock username after finding question
+                                placeholder="輸入 Email"
+                                required
                             />
                         </div>
                     </div>
@@ -177,6 +146,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
                                     onChange={e => setPassword(e.target.value)}
                                     className="w-full bg-slate-950 border border-slate-800 rounded-2xl pl-12 pr-6 py-4 font-bold text-white outline-none focus:border-indigo-500 transition-all"
                                     placeholder="輸入密碼"
+                                    required
                                 />
                             </div>
                         </div>
@@ -194,6 +164,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
                                         onChange={e => setPassword(e.target.value)}
                                         className="w-full bg-slate-950 border border-slate-800 rounded-2xl pl-12 pr-6 py-4 font-bold text-white outline-none focus:border-indigo-500 transition-all"
                                         placeholder="輸入舊密碼"
+                                        required
                                     />
                                 </div>
                             </div>
@@ -207,6 +178,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
                                         onChange={e => setNewPassword(e.target.value)}
                                         className="w-full bg-slate-950 border border-slate-800 rounded-2xl pl-12 pr-6 py-4 font-bold text-white outline-none focus:border-indigo-500 transition-all"
                                         placeholder="輸入新密碼"
+                                        required
                                     />
                                 </div>
                             </div>
@@ -225,6 +197,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
                                         onChange={e => setPassword(e.target.value)}
                                         className="w-full bg-slate-950 border border-slate-800 rounded-2xl pl-12 pr-6 py-4 font-bold text-white outline-none focus:border-indigo-500 transition-all"
                                         placeholder="設定密碼"
+                                        required
                                     />
                                 </div>
                             </div>
@@ -246,65 +219,42 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
                                     onChange={e => setSecurityAnswer(e.target.value)}
                                     className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 font-bold text-white outline-none focus:border-indigo-500 transition-all"
                                     placeholder="輸入答案"
+                                    required
                                 />
                             </div>
                         </>
                     )}
 
                     {mode === 'forgot' && (
-                        <>
-                            {!retrievedQuestion ? (
-                                <button type="button" onClick={handleForgotCheckUser} className="w-full py-4 bg-slate-800 text-slate-300 font-bold rounded-2xl hover:bg-slate-700 transition-all">
-                                    查找帳號安全問題
-                                </button>
-                            ) : (
-                                <>
-                                    <div className="space-y-2">
-                                        <label className="text-xs font-black text-slate-500 uppercase ml-1">Security Question</label>
-                                        <div className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl px-6 py-4 font-bold text-indigo-400">
-                                            {retrievedQuestion}
-                                        </div>
-                                    </div>
-                                    <div className="space-y-2">
-                                        <label className="text-xs font-black text-slate-500 uppercase ml-1">Answer</label>
-                                        <input
-                                            type="text"
-                                            value={securityAnswer}
-                                            onChange={e => setSecurityAnswer(e.target.value)}
-                                            className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 font-bold text-white outline-none focus:border-indigo-500 transition-all"
-                                            placeholder="輸入答案"
-                                        />
-                                    </div>
-                                    <div className="space-y-2">
-                                        <label className="text-xs font-black text-slate-500 uppercase ml-1">New Password</label>
-                                        <div className="relative">
-                                            <Lock size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
-                                            <input
-                                                type="password"
-                                                value={newPassword}
-                                                onChange={e => setNewPassword(e.target.value)}
-                                                className="w-full bg-slate-950 border border-slate-800 rounded-2xl pl-12 pr-6 py-4 font-bold text-white outline-none focus:border-indigo-500 transition-all"
-                                                placeholder="輸入新密碼"
-                                            />
-                                        </div>
-                                    </div>
-                                </>
-                            )}
-                        </>
+                        <div className="space-y-2">
+                            <label className="text-xs font-black text-slate-500 uppercase ml-1">New Password</label>
+                            <div className="relative">
+                                <Lock size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
+                                <input
+                                    type="password"
+                                    value={newPassword}
+                                    onChange={e => setNewPassword(e.target.value)}
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-2xl pl-12 pr-6 py-4 font-bold text-white outline-none focus:border-indigo-500 transition-all"
+                                    placeholder="輸入新密碼"
+                                />
+                            </div>
+                        </div>
                     )}
 
                     {error && <p className="text-red-500 text-sm font-bold text-center bg-red-500/10 py-2 rounded-xl">{error}</p>}
                     {successMsg && <p className="text-green-500 text-sm font-bold text-center bg-green-500/10 py-2 rounded-xl">{successMsg}</p>}
 
-                    {(!retrievedQuestion || mode !== 'forgot') && (
-                        <button className="w-full py-4 bg-indigo-600 text-white font-black rounded-2xl shadow-xl shadow-indigo-600/20 hover:bg-indigo-500 transition-all flex items-center justify-center gap-2 group">
-                            {mode === 'login' && '登入'}
-                            {mode === 'register' && '註冊'}
-                            {mode === 'change' && '修改密碼'}
-                            {mode === 'forgot' && '重設密碼'}
-                            <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
-                        </button>
-                    )}
+                    <button disabled={loading} className="w-full py-4 bg-indigo-600 text-white font-black rounded-2xl shadow-xl shadow-indigo-600/20 hover:bg-indigo-500 transition-all flex items-center justify-center gap-2 group disabled:opacity-50">
+                        {loading ? 'Processing...' : (
+                            <>
+                                {mode === 'login' && '登入'}
+                                {mode === 'register' && '註冊'}
+                                {mode === 'change' && '修改密碼'}
+                                {mode === 'forgot' && '發送重設信'}
+                                <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
+                            </>
+                        )}
+                    </button>
                 </form>
 
                 <div className="mt-6 flex flex-col gap-2 text-center">
@@ -314,7 +264,7 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
                                 沒有帳號？ 建立新帳號
                             </button>
                             <button onClick={() => resetState('forgot')} className="text-slate-500 font-bold text-xs hover:text-indigo-400 transition-colors">
-                                忘記密碼？
+                                忘記密碼？ (Email)
                             </button>
                             <button onClick={() => resetState('change')} className="text-slate-500 font-bold text-xs hover:text-indigo-400 transition-colors">
                                 修改密碼
@@ -326,6 +276,18 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
                             回登入頁面
                         </button>
                     )}
+
+                    <button
+                        onClick={() => {
+                            if (window.confirm('確定要清除所有舊版(單機)的帳號與資料嗎？此動作無法還原。')) {
+                                localStorage.clear();
+                                alert('舊版資料已清除');
+                            }
+                        }}
+                        className="mt-4 text-slate-700 font-bold text-[10px] uppercase hover:text-red-500 transition-colors"
+                    >
+                        清除舊版資料 (Clear Legacy Data)
+                    </button>
                 </div>
             </div>
         </div>
