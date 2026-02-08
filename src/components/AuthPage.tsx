@@ -106,16 +106,8 @@ const AuthPage: React.FC<AuthPageProps> = ({ onLogin }) => {
         }
     };
 
-    // FORCE CLEANUP ON MOUNT (User Request)
-    React.useEffect(() => {
-        const hasCleaned = localStorage.getItem('voyage_legacy_cleaned');
-        if (!hasCleaned) {
-            console.log('Executing forced legacy cleanup...');
-            localStorage.clear();
-            localStorage.setItem('voyage_legacy_cleaned', 'true');
-            // alert('舊版資料已自動清除'); // Optional: Feedback
-        }
-    }, []);
+    // Forced cleanup removed after execution.
+    // Manual cleanup button remains available.
 
     return (
         <div className="min-h-screen bg-black flex items-center justify-center p-6 relative">
